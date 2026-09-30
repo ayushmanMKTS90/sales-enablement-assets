@@ -1,0 +1,2354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Competitor Matrix Dashboard</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN for interactive quadrant chart -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- SheetJS (xlsx) for reading, parsing, and exporting Excel spreadsheets -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Google Font: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    html {
+      scroll-behavior: smooth;
+    }
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    /* Custom scrollbar for matrix table */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 8px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 8px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .editable-cell:hover {
+      background-color: #f8fafc;
+      cursor: pointer;
+    }
+    .editable-cell:focus {
+      outline: 2px solid #6366f1;
+      background-color: #ffffff;
+    }
+    @keyframes slideDown {
+      from { transform: translateY(-12px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .animate-slide-down {
+      animation: slideDown 0.25s ease-out forwards;
+    }
+    /* Dynamic glow pulse animation when jumping to an anchored section */
+    @keyframes targetGlow {
+      0% {
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.7);
+        transform: translateY(-2px);
+      }
+      50% {
+        box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.3);
+      }
+      100% {
+        box-shadow: none;
+        transform: translateY(0);
+      }
+    }
+    .section-highlight {
+      animation: targetGlow 1.4s ease-out;
+    }
+    /* Column resizer styling */
+    th.resizable-th {
+      position: relative;
+      overflow: visible;
+    }
+    .col-resizer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 9px;
+      cursor: col-resize;
+      user-select: none;
+      height: 100%;
+      z-index: 25;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      touch-action: none;
+    }
+    .col-resizer::after {
+      content: '';
+      width: 2px;
+      height: 60%;
+      background-color: #cbd5e1;
+      border-radius: 9999px;
+      transition: background-color 0.15s, height 0.15s, width 0.15s;
+    }
+    .col-resizer:hover::after,
+    .col-resizer.resizing::after {
+      background-color: #6366f1;
+      width: 3px;
+      height: 100%;
+    }
+    body.is-resizing-col {
+      cursor: col-resize !important;
+      user-select: none !important;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- Top Navigation Header: Clean, with Quick Add & Menu Drawer -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
+          <i data-lucide="target" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-bold text-slate-900 tracking-tight">MarketPulse</h1>
+            <span class="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-full border border-indigo-200">Cheat Sheets</span>
+          </div>
+          <p class="text-xs text-slate-500 hidden sm:block">Simple competitor cheat sheets & comparison table</p>
+        </div>
+      </div>
+
+      <!-- Hidden file input for Excel upload -->
+      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv" class="hidden" onchange="handleExcelUpload(event)">
+
+      <!-- Header Controls: Quick Add + Universal Menu Button -->
+      <div class="flex items-center gap-2.5">
+        <button onclick="openAddModal()" 
+                class="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors cursor-pointer"
+                title="Add a new competitor">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">Add Competitor</span>
+          <span class="sm:hidden">Add</span>
+        </button>
+
+        <button id="hamburgerBtn" onclick="toggleMobileMenu()" 
+                class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-slate-700 hover:text-indigo-600 hover:bg-slate-100 bg-slate-50 border border-slate-200 font-semibold text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                aria-label="Open Navigation Menu" aria-expanded="false">
+          <i data-lucide="menu" id="hamburgerIcon" class="w-4 h-4 text-indigo-600"></i>
+          <span>Menu</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Slide-Over Navigation Drawer (Hosts Views, Excel Suite, & Operations) -->
+  <div id="mobileMenuBackdrop" onclick="closeMobileMenu()" 
+       class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 transition-opacity duration-300 opacity-0 pointer-events-none"></div>
+
+  <aside id="mobileMenuDrawer" 
+         class="fixed inset-y-0 right-0 w-full max-w-xs sm:max-w-sm bg-white z-50 shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out translate-x-full"
+         aria-label="Navigation Drawer">
+    
+    <!-- Drawer Top Bar -->
+    <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+          <i data-lucide="target" class="w-4 h-4"></i>
+        </div>
+        <div>
+          <h2 class="font-bold text-slate-900 text-sm tracking-tight">MarketPulse Menu</h2>
+          <p class="text-[11px] text-slate-500">Pages, Excel & tools</p>
+        </div>
+      </div>
+      <button onclick="closeMobileMenu()" 
+              class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              aria-label="Close navigation menu">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+
+    <!-- Scrollable Drawer Body -->
+    <div class="flex-1 overflow-y-auto p-5 space-y-6 text-xs">
+      
+      <!-- Primary Views Section -->
+      <div class="space-y-2">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pages</p>
+        <div class="space-y-1.5">
+          <button id="mobNavBattlecardsBtn" onclick="switchView('battlecards'); closeMobileMenu();" 
+                  class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 transition-colors text-left cursor-pointer">
+            <span class="flex items-center gap-2.5">
+              <i data-lucide="target" class="w-4 h-4 text-indigo-600"></i>
+              <span class="text-sm font-semibold">Competitor Cheat Sheets</span>
+            </span>
+            <span class="text-[10px] bg-indigo-200/70 text-indigo-800 px-1.5 py-0.5 rounded font-semibold">Main</span>
+          </button>
+
+          <button id="mobNavDashboardBtn" onclick="switchView('dashboard'); closeMobileMenu();" 
+                  class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-slate-700 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors text-left cursor-pointer">
+            <span class="flex items-center gap-2.5">
+              <i data-lucide="layout-grid" class="w-4 h-4 text-slate-600"></i>
+              <span class="text-sm font-medium">Comparison Table & Chart</span>
+            </span>
+          </button>
+
+          <button id="mobNavGuideBtn" onclick="switchView('guide'); closeMobileMenu();" 
+                  class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-slate-700 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors text-left cursor-pointer">
+            <span class="flex items-center gap-2.5">
+              <i data-lucide="book-open" class="w-4 h-4 text-indigo-600"></i>
+              <span class="text-sm">How to Use This</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Excel Data Suite Section -->
+      <div class="space-y-2">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Excel Spreadsheets</p>
+        <div class="space-y-1.5">
+          <button onclick="document.getElementById('excelFileInput').click(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors text-left cursor-pointer">
+            <i data-lucide="file-up" class="w-4 h-4 text-emerald-600"></i>
+            <span class="text-sm">Upload Excel File (.xlsx)</span>
+          </button>
+
+          <button onclick="exportToExcel(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-white bg-emerald-600 hover:bg-emerald-700 shadow-xs transition-colors text-left cursor-pointer">
+            <i data-lucide="file-down" class="w-4 h-4"></i>
+            <span class="text-sm">Download Excel File (.xlsx)</span>
+          </button>
+
+          <button onclick="downloadExcelTemplate(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors text-left cursor-pointer">
+            <i data-lucide="download" class="w-4 h-4 text-slate-500"></i>
+            <span class="text-sm">Download Blank Template</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Data Operations & Actions -->
+      <div class="space-y-2">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick Actions</p>
+        <div class="space-y-1.5">
+          <button onclick="openAddModal(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs transition-colors text-left cursor-pointer">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span class="text-sm">Add a Competitor</span>
+          </button>
+
+          <button onclick="openAddFeatureModal(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors text-left cursor-pointer">
+            <i data-lucide="columns-3" class="w-4 h-4 text-slate-600"></i>
+            <span class="text-sm">Add a Feature Column</span>
+          </button>
+
+          <button onclick="resetToSampleData(); closeMobileMenu();" 
+                  class="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors text-left cursor-pointer">
+            <i data-lucide="rotate-ccw" class="w-4 h-4 text-rose-600"></i>
+            <span class="text-sm">Reset to Demo Data</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Drawer Sticky Footer -->
+    <div class="p-4 border-t border-slate-200 bg-slate-50 text-[11px] text-slate-500 flex items-center justify-between">
+      <span class="flex items-center gap-1.5 text-emerald-700 font-medium">
+        <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Changes saved automatically
+      </span>
+      <span class="text-slate-400 font-medium">MarketPulse</span>
+    </div>
+  </aside>
+
+  <!-- Standalone Battlecards View (Default Landing View) -->
+  <main id="battlecardsView" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1 space-y-6">
+    
+    <!-- Top Navigation & Controls Bar -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div class="flex items-center gap-3">
+        <button onclick="switchView('dashboard')" 
+                class="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl text-xs sm:text-sm shadow-xs transition-all cursor-pointer">
+          <i data-lucide="layout-grid" class="w-4 h-4 text-indigo-400"></i>
+          <span>Open Comparison Table & Chart</span>
+        </button>
+        <span class="text-xs text-slate-400 hidden sm:inline">|</span>
+        <span class="text-xs text-slate-500 font-medium hidden sm:inline flex items-center gap-1.5">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i> Synced with Table
+        </span>
+      </div>
+
+      <!-- View Toggles & Selectors -->
+      <div class="flex flex-wrap items-center gap-2.5">
+        <div class="flex items-center bg-slate-200/80 p-0.5 rounded-lg border border-slate-300 text-xs">
+          <button id="battlecardTabGrid" onclick="setBattlecardViewMode('grid')" 
+                  class="px-3 py-1.5 rounded-md font-medium text-white bg-indigo-600 shadow-xs transition-all cursor-pointer">
+            Show All
+          </button>
+          <button id="battlecardTabSingle" onclick="setBattlecardViewMode('focused')" 
+                  class="px-3 py-1.5 rounded-md font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+            Pick One
+          </button>
+        </div>
+
+        <!-- Dropdown for focused competitor (shown when focused mode is selected) -->
+        <div id="battlecardSelectContainer" class="hidden flex items-center gap-1.5">
+          <select id="battlecardCompetitorSelect" onchange="onBattlecardCompetitorChange()" 
+                  class="bg-white border border-slate-300 text-slate-800 text-xs rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-2xs font-medium">
+            <!-- Dynamically populated -->
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Battlecard Hero Banner -->
+    <div class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-lg relative overflow-hidden">
+      <div class="absolute -right-10 -bottom-10 w-56 h-56 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="space-y-2 max-w-2xl">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-semibold">
+            <i data-lucide="target" class="w-3.5 h-3.5"></i>
+            <span>Sales Cheat Sheets</span>
+          </div>
+          <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">How to Beat Every Competitor</h2>
+          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Simple cheat sheets for sales calls. See what each competitor is good at, where they mess up, smart questions to ask buyers, and quick answers when customers push back.
+          </p>
+        </div>
+        <div class="shrink-0 flex items-center gap-2">
+          <button onclick="switchView('dashboard')" 
+                  class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs text-white flex items-center gap-2 transition-colors cursor-pointer">
+            <i data-lucide="table" class="w-3.5 h-3.5 text-indigo-400"></i>
+            <span>Go to Comparison Table</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dynamic Battlecards Content Container -->
+    <div id="battlecardsContainer">
+      <!-- Rendered via JS -->
+    </div>
+
+    <!-- Bottom Return CTA -->
+    <div class="p-6 rounded-2xl bg-slate-100 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div class="space-y-0.5 text-left">
+        <h4 class="font-bold text-slate-900 text-sm">Want to change prices, scores, or edit in Excel?</h4>
+        <p class="text-xs text-slate-500">Jump over to the full table view to click and edit values, see the price chart, or export/import Excel sheets.</p>
+      </div>
+      <button onclick="switchView('dashboard')" 
+              class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs sm:text-sm shadow-sm transition-all cursor-pointer shrink-0">
+        <i data-lucide="layout-grid" class="w-4 h-4"></i>
+        <span>Open Comparison Table</span>
+      </button>
+    </div>
+
+  </main>
+
+  <!-- Secondary Subnav bar for Excel info (visible only in dashboard view) -->
+  <div id="subNavBar" class="hidden bg-gradient-to-r from-indigo-50 via-slate-50 to-emerald-50 border-b border-indigo-100/60 px-4 py-2.5">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between text-xs text-slate-600 gap-2">
+      <div class="flex items-center gap-2 text-indigo-900 font-medium">
+        <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-indigo-600 animate-spin-slow"></i>
+        <span>Quick Tip:</span>
+        <span class="text-slate-600 font-normal">You can edit anything in the table below, or download the Excel sheet, edit there, and upload it back.</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="lastSavedIndicator" class="text-emerald-700 font-medium flex items-center gap-1">
+          <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Saved automatically
+        </span>
+        <button onclick="resetToSampleData()" class="text-slate-500 hover:text-slate-800 underline transition-colors cursor-pointer">Reset Demo Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Secondary Dashboard View (KPIs, Quadrant Chart, & Live Matrix Grid) -->
+  <main id="dashboardView" class="hidden max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full flex-1 space-y-6">
+    
+    <!-- Top Utility Bar with Quick Switch back to Battlecards -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <span class="flex items-center gap-1.5 font-semibold text-slate-700">
+          <i data-lucide="layout-grid" class="w-4 h-4 text-indigo-600"></i> Competitor Table & Chart
+        </span>
+        <span class="text-slate-300">|</span>
+        <span>Click any box to edit</span>
+      </div>
+      <button onclick="switchView('battlecards')" 
+              class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-xl text-xs border border-indigo-200 transition-all cursor-pointer w-fit">
+        <i data-lucide="arrow-left" class="w-3.5 h-3.5 text-indigo-600"></i>
+        <span>Back to Cheat Sheets</span>
+      </button>
+    </div>
+
+    <!-- KPI Metric Cards -->
+    <div id="kpiSection" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 scroll-mt-24 transition-all">
+      <!-- Card 1 -->
+      <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-xs flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Competitors</p>
+          <h3 id="statTotalCompetitors" class="text-2xl font-bold text-slate-900 mt-1">6</h3>
+          <p class="text-xs text-slate-500 mt-1">Including Us</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+          <i data-lucide="layers" class="w-6 h-6"></i>
+        </div>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-xs flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Top-Rated Rival</p>
+          <h3 id="statMarketLeader" class="text-xl font-bold text-emerald-600 mt-1 truncate max-w-[150px]">Acme Pro Corp</h3>
+          <p id="statLeaderScore" class="text-xs text-slate-500 mt-1">Quality Score: 91/100</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+          <i data-lucide="trophy" class="w-6 h-6"></i>
+        </div>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-xs flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Average Rival Price</p>
+          <h3 id="statAvgPrice" class="text-2xl font-bold text-slate-900 mt-1">$73</h3>
+          <p class="text-xs text-slate-500 mt-1">Per month</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+          <i data-lucide="tag" class="w-6 h-6"></i>
+        </div>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-xs flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Our Quality Edge</p>
+          <h3 id="statAdvantageIndex" class="text-2xl font-bold text-indigo-600 mt-1">+14 pts</h3>
+          <p class="text-xs text-slate-500 mt-1">Higher than market average</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+          <i data-lucide="trending-up" class="w-6 h-6"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Section: Quadrant Scatter Chart -->
+    <div id="chartsSection" class="scroll-mt-24 transition-all">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-xs p-5 flex flex-col">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+          <div>
+            <h2 class="font-bold text-slate-900 flex items-center gap-2 text-sm sm:text-base">
+              <i data-lucide="grid" class="w-4 h-4 text-indigo-600"></i>
+              Price vs. Quality Chart
+            </h2>
+            <p class="text-xs text-slate-500">Left is cheaper, top is better quality. Bigger circles mean bigger companies.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+              ★ = Us
+            </span>
+          </div>
+        </div>
+        <div class="relative flex-1 min-h-[340px] w-full pt-4">
+          <canvas id="quadrantChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- The Matrix Section -->
+    <div id="matrixSection" class="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden scroll-mt-24 transition-all">
+      <!-- Matrix Header Controls -->
+      <div class="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="font-bold text-slate-900 text-base">Feature & Price Comparison Table</h2>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">Click any box to edit</span>
+          </div>
+          <p class="text-xs text-slate-500 mt-0.5">Click and type to change names or prices. Click feature buttons to switch between Yes, Partial, and No.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- Search input -->
+          <div class="relative">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
+            <input type="text" id="matrixSearchInput" oninput="filterMatrixTable()" placeholder="Find a competitor..." 
+                   class="pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg w-44 sm:w-56 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white transition-all">
+          </div>
+
+          <!-- Reset Column Widths Button -->
+          <button onclick="resetColumnWidths()" title="Reset all column widths to default" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer">
+            <i data-lucide="split" class="w-3.5 h-3.5"></i>
+            <span>Reset Widths</span>
+          </button>
+
+          <!-- Add Feature Column Button -->
+          <button onclick="openAddFeatureModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer">
+            <i data-lucide="columns-3" class="w-3.5 h-3.5"></i>
+            <span>Add a Feature</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Scrollable Matrix Table Container -->
+      <div class="overflow-x-auto max-h-[600px] relative">
+        <table id="matrixTable" class="text-left border-collapse text-xs" style="table-layout: fixed; min-width: 100%; width: max-content;">
+          <thead class="bg-slate-50 text-slate-700 sticky top-0 z-20 border-b border-slate-200 shadow-xs">
+            <tr id="matrixTableHeader">
+              <!-- Dynamically rendered -->
+            </tr>
+          </thead>
+          <tbody id="matrixTableBody" class="divide-y divide-slate-200 text-slate-700">
+            <!-- Dynamically rendered rows -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Matrix Footer note -->
+      <div class="p-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-500 gap-2">
+        <div class="flex items-center gap-4">
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Has it (Yes)</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> Partial / Extra Cost</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span> Doesn't have it (No)</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="hidden sm:inline text-slate-400">|</span>
+          <span class="flex items-center gap-1"><i data-lucide="arrows-left-right" class="w-3 h-3 text-indigo-500"></i> Drag column edge to resize (double-click to reset)</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Standalone User Guide View -->
+  <main id="guideView" class="hidden max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1 space-y-8">
+    
+    <!-- Top Back Navigation Bar -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200">
+      <button onclick="switchView('battlecards')" 
+              class="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl text-sm shadow-sm transition-all cursor-pointer w-fit">
+        <i data-lucide="arrow-left" class="w-4 h-4"></i>
+        <span>Back to Cheat Sheets</span>
+      </button>
+
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <span class="px-2.5 py-1 bg-slate-100 rounded-lg font-medium text-slate-700">Simple Guide</span>
+        <span>•</span>
+        <span>Version 2.5</span>
+      </div>
+    </div>
+
+    <!-- Hero Header -->
+    <div class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-8 sm:p-10 text-white shadow-xl relative overflow-hidden">
+      <div class="absolute -right-12 -bottom-12 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="relative z-10 max-w-2xl space-y-3">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-semibold">
+          <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+          <span>How It Works</span>
+        </div>
+        <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight">How to Use This Dashboard</h2>
+        <p class="text-sm sm:text-base text-slate-300 leading-relaxed">
+          A quick guide on how to edit competitors, use Excel, and win more sales calls with cheat sheets.
+        </p>
+      </div>
+    </div>
+
+    <!-- Guide Section 1 -->
+    <section class="bg-white rounded-2xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-sm flex items-center justify-center">1</div>
+        <h3 class="text-lg font-bold text-slate-900">1. Editing the Table</h3>
+      </div>
+      <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+        Just click on any name, price, or score to type new numbers. Click on any green/yellow/red button to flip between Yes, Partial, and No. Everything saves automatically.
+      </p>
+    </section>
+
+    <!-- Guide Section 2 -->
+    <section class="bg-white rounded-2xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-sm flex items-center justify-center">2</div>
+        <h3 class="text-lg font-bold text-slate-900">2. Using Excel</h3>
+      </div>
+      <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+        Click <strong>Download Excel File</strong> from the Menu whenever you want a copy. You can make changes in Excel or Google Sheets, then click <strong>Upload Excel File</strong> to pull those changes back in.
+      </p>
+    </section>
+
+    <!-- Guide Section 3 -->
+    <section class="bg-white rounded-2xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 font-bold text-sm flex items-center justify-center">3</div>
+        <h3 class="text-lg font-bold text-slate-900">3. Using the Cheat Sheets on Sales Calls</h3>
+      </div>
+      <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+        When a buyer brings up a competitor, open that competitor's cheat sheet. You'll get a 30-second pitch, questions to ask the buyer that reveal the competitor's weak spots, and a ready-made comeback line.
+      </p>
+    </section>
+
+    <!-- Bottom Return CTA -->
+    <div class="p-6 rounded-2xl bg-slate-900 text-white flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>
+        <h4 class="font-bold text-base">Ready to jump back in?</h4>
+        <p class="text-xs text-slate-300 mt-0.5">All your data is saved and ready.</p>
+      </div>
+      <button onclick="switchView('battlecards')" 
+              class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs sm:text-sm shadow-md transition-all cursor-pointer">
+        <i data-lucide="arrow-left" class="w-4 h-4"></i>
+        <span>Return to Cheat Sheets</span>
+      </button>
+    </div>
+
+  </main>
+
+  <!-- Modal: Add New Competitor -->
+  <div id="addModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-slide-down">
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="user-plus" class="w-4 h-4 text-indigo-600"></i> Add a Competitor
+        </h3>
+        <button onclick="closeAddModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="addCompetitorForm" onsubmit="handleCompetitorSubmit(event)" class="p-6 space-y-4 text-xs">
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Company / Product Name *</label>
+          <input type="text" id="newCompName" required placeholder="e.g. Acme, RivalApp" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">Category / Level</label>
+            <select id="newCompTier" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+              <option value="Leader">Market Leader</option>
+              <option value="Challenger" selected>Challenger</option>
+              <option value="Niche">Niche / Budget</option>
+              <option value="Legacy">Old Legacy</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">Price ($/month)</label>
+            <input type="number" id="newCompPrice" min="0" value="49" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">Quality (0-100)</label>
+            <input type="number" id="newCompScore" min="0" max="100" value="75" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">Ease of Use (0-10)</label>
+            <input type="number" id="newCompUsability" min="0" max="10" step="0.1" value="7.5" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">Help & Support (0-10)</label>
+            <input type="number" id="newCompSupport" min="0" max="10" step="0.1" value="7.0" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+        </div>
+        <div class="pt-3 flex justify-end gap-2 border-t border-slate-100">
+          <button type="button" onclick="closeAddModal()" class="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium cursor-pointer">Cancel</button>
+          <button type="submit" class="px-4 py-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg font-medium cursor-pointer">Add Competitor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add Feature Column -->
+  <div id="addFeatureModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden animate-slide-down">
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="columns-3" class="w-4 h-4 text-indigo-600"></i> Add a Feature to Compare
+        </h3>
+        <button onclick="closeAddFeatureModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="addFeatureForm" onsubmit="handleFeatureSubmit(event)" class="p-6 space-y-4 text-xs">
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Feature Name *</label>
+          <input type="text" id="newFeatureName" required placeholder="e.g. Mobile App, Single Sign-On" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Starting Setting</label>
+          <select id="newFeatureDefault" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="Yes">Has it (Yes)</option>
+            <option value="Partial">Partial / Extra Cost</option>
+            <option value="No" selected>Doesn't have it (No)</option>
+          </select>
+        </div>
+        <div class="pt-3 flex justify-end gap-2 border-t border-slate-100">
+          <button type="button" onclick="closeAddFeatureModal()" class="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium cursor-pointer">Cancel</button>
+          <button type="submit" class="px-4 py-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg font-medium cursor-pointer">Add Feature</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Edit Battlecard -->
+  <div id="editBattlecardModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-slide-down max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+          <i data-lucide="edit-3" class="w-4 h-4 text-indigo-600"></i> 
+          <span>Edit Cheat Sheet: <span id="editBattlecardCompName" class="text-indigo-600">Competitor</span></span>
+        </h3>
+        <button onclick="closeEditBattlecardModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="editBattlecardForm" onsubmit="handleBattlecardSubmit(event)" class="p-6 space-y-4 text-xs overflow-y-auto flex-1">
+        <input type="hidden" id="editBattlecardCompId">
+
+        <div>
+          <label class="block font-semibold text-slate-800 mb-1">Quick Pitch: Why We Win (30-second summary)</label>
+          <textarea id="editBattlecardPitch" rows="2.5" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Short and sweet reason why customers choose us over them..."></textarea>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-800 mb-1">What They're Good At (1 item per line)</label>
+          <textarea id="editBattlecardStrengths" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-[11px]" placeholder="Famous brand name&#10;Lots of add-on partners&#10;Big support team"></textarea>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-800 mb-1">Where They Fall Short (Their weak spots - 1 item per line)</label>
+          <textarea id="editBattlecardWeaknesses" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-[11px]" placeholder="Takes months to set up&#10;Hidden fees and high price&#10;Slow and confusing to use"></textarea>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-800 mb-1">Smart Questions to Ask the Buyer (1 item per line)</label>
+          <textarea id="editBattlecardLandmines" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-[11px]" placeholder="Ask them how much extra they charge for setup and training.&#10;Ask if their AI tool is included or costs extra per seat."></textarea>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-800 mb-1">Best Comeback Line (When the buyer says 'They are the safe choice')</label>
+          <textarea id="editBattlecardSilverBullet" rows="2.5" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="When the customer says X: Remind them that..."></textarea>
+        </div>
+
+        <div class="pt-3 flex justify-end gap-2 border-t border-slate-100">
+          <button type="button" onclick="closeEditBattlecardModal()" class="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium cursor-pointer">Cancel</button>
+          <button type="submit" class="px-4 py-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg font-medium cursor-pointer">Save Cheat Sheet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Floating Toast Notifications (Safe replacement for alert()) -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <script>
+    /* Default initial dataset with stupid simple, plain-English text */
+    const DEFAULT_DATA = {
+      columnWidths: {
+        col_name: 210,
+        col_tier: 120,
+        col_price: 100,
+        col_score: 110,
+        col_usability: 100,
+        col_support: 100,
+        col_action: 70
+      },
+      features: [
+        { id: 'api_access', name: 'Software Connections (API)' },
+        { id: 'sso_saml', name: 'Company Login (SSO)' },
+        { id: 'custom_reports', name: 'Custom Reports' },
+        { id: 'ai_copilot', name: 'AI Helper' },
+        { id: 'mobile_apps', name: 'Mobile App' },
+        { id: 'sla_guarantee', name: '99.9% Uptime Promise' }
+      ],
+      competitors: [
+        {
+          id: 'comp_you',
+          isYou: true,
+          name: 'Our Product (You)',
+          tier: 'Leader',
+          price: 49,
+          score: 88,
+          usability: 9.2,
+          support: 9.0,
+          marketShare: 22,
+          notes: 'Fast, simple, and modern',
+          battlecard: {
+            pitch: 'We give you easy, modern software with AI built in, at half the price and without the painful months of setup.',
+            strengths: [
+              'Super easy to learn (days, not months)',
+              'AI helper and connections included for free',
+              'Fast and friendly support team (rated 9.0/10)',
+              'Guaranteed 99.9% uptime promise included'
+            ],
+            weaknesses: [
+              'Newer brand name in the market',
+              'Mobile app is still getting full offline mode'
+            ],
+            landmines: [
+              'Tell buyers to test how fast they can set up a workflow with us vs the competition.',
+              'Tell buyers to check if other tools charge extra for company login or AI.'
+            ],
+            silverBullet: 'Point out our clear $49/mo flat price, our instant 2-day trial, and that your team will actually enjoy using it.'
+          },
+          features: {
+            api_access: 'Yes',
+            sso_saml: 'Yes',
+            custom_reports: 'Yes',
+            ai_copilot: 'Yes',
+            mobile_apps: 'Partial',
+            sla_guarantee: 'Yes'
+          }
+        },
+        {
+          id: 'comp_acme',
+          isYou: false,
+          name: 'Acme Pro Corp',
+          tier: 'Leader',
+          price: 99,
+          score: 91,
+          usability: 8.0,
+          support: 8.5,
+          marketShare: 35,
+          notes: 'Big, famous, old giant',
+          battlecard: {
+            pitch: 'They are the big famous brand everyone knows, but they are twice as expensive, take months to set up, and charge for every little add-on.',
+            strengths: [
+              'Huge brand name that safe corporate bosses love',
+              'Thousands of outside consultants who can set it up',
+              'Big call centers around the world'
+            ],
+            weaknesses: [
+              'Way too expensive ($99/mo plus surprise fees)',
+              'Takes 3 to 6 painful months just to start using it',
+              'Clunky, slow screens that regular employees hate'
+            ],
+            landmines: [
+              'Ask them: How much extra will you pay in setup fees and training classes before anyone can even use it?',
+              'Ask them: Is their AI helper included in the price, or do they charge extra per user each month?'
+            ],
+            silverBullet: 'When they say "Acme is the safer choice": Remind them that companies switch to us so they can get started in 2 days without paying a $25,000 consulting fee.'
+          },
+          features: {
+            api_access: 'Yes',
+            sso_saml: 'Yes',
+            custom_reports: 'Yes',
+            ai_copilot: 'Partial',
+            mobile_apps: 'Yes',
+            sla_guarantee: 'Yes'
+          }
+        },
+        {
+          id: 'comp_bolt',
+          isYou: false,
+          name: 'BoltFlow Inc',
+          tier: 'Challenger',
+          price: 59,
+          score: 82,
+          usability: 8.7,
+          support: 7.8,
+          marketShare: 18,
+          notes: 'Built for coders, not regular teams',
+          battlecard: {
+            pitch: 'Great for tech-savvy software developers, but too confusing for regular team members. We give you the same power, but with mobile apps and human phone support.',
+            strengths: [
+              'Software developers and coders love it',
+              'Fast updates and great technical guides',
+              'Active online developer chat community'
+            ],
+            weaknesses: [
+              'No phone app for iOS or Android',
+              'No phone number to call when things break',
+              'Company login (SSO) is locked behind a secret expensive plan'
+            ],
+            landmines: [
+              'Ask them: Can your non-technical team members actually use this without help from your IT department?',
+              'Ask them: What happens if your system breaks on a weekend—can you call an actual human?'
+            ],
+            silverBullet: 'When they say "BoltFlow is more agile": Tell them agility does not matter if half your non-tech team cannot figure out how to click around.'
+          },
+          features: {
+            api_access: 'Yes',
+            sso_saml: 'Partial',
+            custom_reports: 'Partial',
+            ai_copilot: 'Yes',
+            mobile_apps: 'No',
+            sla_guarantee: 'Partial'
+          }
+        },
+        {
+          id: 'comp_zenith',
+          isYou: false,
+          name: 'Zenith Suite',
+          tier: 'Legacy',
+          price: 120,
+          score: 74,
+          usability: 6.2,
+          support: 8.9,
+          marketShare: 15,
+          notes: 'Old software from 15 years ago',
+          battlecard: {
+            pitch: 'Old software from 15 years ago that companies bought and are now stuck with. It costs the most, feels ancient, and has zero modern AI shortcuts.',
+            strengths: [
+              'Has all the government and bank security badges',
+              'Dedicated account managers who take clients to lunch',
+              'Hard for big companies to cancel their long contracts'
+            ],
+            weaknesses: [
+              'The most expensive option on the market ($120/mo)',
+              'Ugly and confusing—employees avoid using it',
+              'Zero modern AI tools to save you time'
+            ],
+            landmines: [
+              'Ask them: How many of your employees actually log into Zenith, vs just working out of Excel to avoid it?',
+              'Ask them: When was the last time Zenith made their screens cleaner or faster to use?'
+            ],
+            silverBullet: 'When they say "We have had Zenith for 8 years": Ask them if their staff actually likes using it, or if they are just scared of the switching hassle.'
+          },
+          features: {
+            api_access: 'Partial',
+            sso_saml: 'Yes',
+            custom_reports: 'Yes',
+            ai_copilot: 'No',
+            mobile_apps: 'Yes',
+            sla_guarantee: 'Yes'
+          }
+        },
+        {
+          id: 'comp_nimble',
+          isYou: false,
+          name: 'NimbleStack',
+          tier: 'Niche',
+          price: 29,
+          score: 68,
+          usability: 8.9,
+          support: 6.5,
+          marketShare: 7,
+          notes: 'Cheap and basic for freelancers',
+          battlecard: {
+            pitch: 'Very cheap for freelancers, but missing basic security and custom reports that real growing companies need. You will outgrow it in 6 months.',
+            strengths: [
+              'Very low price ($29/mo)',
+              'Clean, simple screens that anyone can try in 2 minutes',
+              'Easy to buy with a quick credit card swipe'
+            ],
+            weaknesses: [
+              'No company login security (IT will reject it)',
+              'Cannot build custom reports for management',
+              'Slow email-only customer support that takes 2 days'
+            ],
+            landmines: [
+              'Ask them: Will your IT boss approve a tool that does not have company single sign-on (SSO)?',
+              'Ask them: How will your manager build reports across different departments?'
+            ],
+            silverBullet: 'When they say "NimbleStack is half the price": Remind them that saving $20/month is not worth failing an IT security audit and having to switch tools 6 months later.'
+          },
+          features: {
+            api_access: 'Yes',
+            sso_saml: 'No',
+            custom_reports: 'No',
+            ai_copilot: 'Partial',
+            mobile_apps: 'No',
+            sla_guarantee: 'No'
+          }
+        },
+        {
+          id: 'comp_vanguard',
+          isYou: false,
+          name: 'Vanguard X',
+          tier: 'Challenger',
+          price: 79,
+          score: 79,
+          usability: 7.5,
+          support: 8.1,
+          marketShare: 12,
+          notes: 'Decent, but overpriced for what it is',
+          battlecard: {
+            pitch: 'A decent middle-of-the-road choice, but overpriced for what you get. We give you a friendlier design, built-in AI, and save you 40% on price.',
+            strengths: [
+              'Decent all-around feature set',
+              'Helpful phone support team',
+              'Annual customer user meetups'
+            ],
+            weaknesses: [
+              'Costs $79/mo without any real AI tools',
+              'Reports cannot be changed easily without help',
+              'Phone app does not work without internet'
+            ],
+            landmines: [
+              'Ask them: Can you edit your dashboard numbers yourself without contacting their technical support?',
+              'Ask them: How are they helping you use AI right now in your daily work?'
+            ],
+            silverBullet: 'When they consider Vanguard X: Show them our AI helper and remind them that our $49 plan gives them more features for almost half the cost.'
+          },
+          features: {
+            api_access: 'Yes',
+            sso_saml: 'Yes',
+            custom_reports: 'Partial',
+            ai_copilot: 'No',
+            mobile_apps: 'Partial',
+            sla_guarantee: 'Yes'
+          }
+        }
+      ]
+    };
+
+    const STORAGE_KEY = 'marketpulse_matrix_v6_simple';
+    let matrixData = loadData();
+    let quadrantChartInstance = null;
+    let battlecardViewMode = 'grid'; // Default to grid view so all cards show immediately
+    let selectedBattlecardCompId = null;
+
+    function loadData() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && Array.isArray(parsed.competitors) && parsed.competitors.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load from localStorage:', err);
+      }
+      const fresh = JSON.parse(JSON.stringify(DEFAULT_DATA));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+      } catch(e){}
+      return fresh;
+    }
+
+    function saveData() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(matrixData));
+        const indicator = document.getElementById('lastSavedIndicator');
+        if (indicator) {
+          indicator.innerHTML = `<i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Saved ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}`;
+          lucide.createIcons();
+        }
+      } catch (e) {
+        console.error('Save failed', e);
+      }
+    }
+
+    function resetToSampleData() {
+      matrixData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+      saveData();
+      renderAll();
+      showToast('Reset back to sample competitor data with full battlecards', 'info');
+    }
+
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      const colors = {
+        success: 'bg-emerald-600 text-white shadow-emerald-200',
+        error: 'bg-rose-600 text-white shadow-rose-200',
+        info: 'bg-indigo-600 text-white shadow-indigo-200'
+      };
+
+      const icons = {
+        success: 'check-circle',
+        error: 'alert-triangle',
+        info: 'info'
+      };
+
+      toast.className = `flex items-center gap-2.5 px-4 py-2.5 rounded-xl shadow-lg pointer-events-auto text-xs font-medium transform transition-all duration-300 translate-y-2 opacity-0 ${colors[type] || colors.info}`;
+      toast.innerHTML = `
+        <i data-lucide="${icons[type] || 'info'}" class="w-4 h-4 shrink-0"></i>
+        <span>${message}</span>
+      `;
+      container.appendChild(toast);
+      lucide.createIcons();
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    function openMobileMenu() {
+      const backdrop = document.getElementById('mobileMenuBackdrop');
+      const drawer = document.getElementById('mobileMenuDrawer');
+      const btn = document.getElementById('hamburgerBtn');
+      if (!drawer || !backdrop) return;
+
+      backdrop.classList.remove('opacity-0', 'pointer-events-none');
+      backdrop.classList.add('opacity-100', 'pointer-events-auto');
+      drawer.classList.remove('translate-x-full');
+      drawer.classList.add('translate-x-0');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+      document.body.style.overflow = 'hidden';
+      lucide.createIcons();
+    }
+
+    function closeMobileMenu() {
+      const backdrop = document.getElementById('mobileMenuBackdrop');
+      const drawer = document.getElementById('mobileMenuDrawer');
+      const btn = document.getElementById('hamburgerBtn');
+      if (!drawer || !backdrop) return;
+
+      backdrop.classList.remove('opacity-100', 'pointer-events-auto');
+      backdrop.classList.add('opacity-0', 'pointer-events-none');
+      drawer.classList.remove('translate-x-0');
+      drawer.classList.add('translate-x-full');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    }
+
+    function toggleMobileMenu() {
+      const drawer = document.getElementById('mobileMenuDrawer');
+      if (drawer && drawer.classList.contains('translate-x-0')) {
+        closeMobileMenu();
+      } else {
+        openMobileMenu();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeMobileMenu();
+    });
+
+    function switchView(viewName) {
+      const dashView = document.getElementById('dashboardView');
+      const guideView = document.getElementById('guideView');
+      const battlecardsView = document.getElementById('battlecardsView');
+      const subBar = document.getElementById('subNavBar');
+
+      const mobGuideBtn = document.getElementById('mobNavGuideBtn');
+      const mobBattlecardsBtn = document.getElementById('mobNavBattlecardsBtn');
+      const mobDashBtn = document.getElementById('mobNavDashboardBtn');
+
+      // Hide all views initially
+      if (dashView) dashView.classList.add('hidden');
+      if (guideView) guideView.classList.add('hidden');
+      if (battlecardsView) battlecardsView.classList.add('hidden');
+      if (subBar) subBar.classList.add('hidden');
+
+      // Reset menu button active states
+      [mobGuideBtn, mobBattlecardsBtn, mobDashBtn].forEach(btn => {
+        if (btn) {
+          btn.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+          btn.classList.add('text-slate-700', 'border-transparent');
+        }
+      });
+
+      if (viewName === 'guide') {
+        if (guideView) guideView.classList.remove('hidden');
+        if (mobGuideBtn) {
+          mobGuideBtn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+          mobGuideBtn.classList.remove('text-slate-700', 'border-transparent');
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (viewName === 'dashboard') {
+        if (dashView) dashView.classList.remove('hidden');
+        if (subBar) subBar.classList.remove('hidden');
+        if (mobDashBtn) {
+          mobDashBtn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+          mobDashBtn.classList.remove('text-slate-700', 'border-transparent');
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (quadrantChartInstance) {
+          quadrantChartInstance.resize();
+        }
+      } else {
+        // Default: Competitive Battlecards View
+        if (battlecardsView) battlecardsView.classList.remove('hidden');
+        if (mobBattlecardsBtn) {
+          mobBattlecardsBtn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+          mobBattlecardsBtn.classList.remove('text-slate-700', 'border-transparent');
+        }
+        renderBattlecards();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      lucide.createIcons();
+    }
+
+    function updateKPIs() {
+      const comps = matrixData.competitors;
+      if (!comps || comps.length === 0) return;
+
+      const totalEl = document.getElementById('statTotalCompetitors');
+      if (totalEl) totalEl.textContent = comps.length;
+
+      let leader = comps[0];
+      let totalPrice = 0;
+      let totalScore = 0;
+      let myComp = comps.find(c => c.isYou) || comps[0];
+
+      comps.forEach(c => {
+        if ((c.score || 0) > (leader.score || 0)) {
+          leader = c;
+        }
+        totalPrice += Number(c.price || 0);
+        totalScore += Number(c.score || 0);
+      });
+
+      const avgPrice = Math.round(totalPrice / comps.length);
+      const avgScore = Math.round(totalScore / comps.length);
+
+      const leaderEl = document.getElementById('statMarketLeader');
+      const leaderScoreEl = document.getElementById('statLeaderScore');
+      const avgPriceEl = document.getElementById('statAvgPrice');
+
+      if (leaderEl) leaderEl.textContent = leader.name;
+      if (leaderScoreEl) leaderScoreEl.textContent = `Overall Score: ${leader.score}/100`;
+      if (avgPriceEl) avgPriceEl.textContent = `$${avgPrice}`;
+
+      const diff = myComp.score - avgScore;
+      const advEl = document.getElementById('statAdvantageIndex');
+      if (advEl) {
+        if (diff >= 0) {
+          advEl.textContent = `+${diff} pts`;
+          advEl.className = 'text-2xl font-bold text-emerald-600 mt-1';
+        } else {
+          advEl.textContent = `${diff} pts`;
+          advEl.className = 'text-2xl font-bold text-rose-600 mt-1';
+        }
+      }
+    }
+
+    function getColWidth(colId, defaultW) {
+      if (!matrixData.columnWidths) matrixData.columnWidths = {};
+      return matrixData.columnWidths[colId] || defaultW;
+    }
+
+    function renderMatrixTable(filterQuery = '') {
+      const theadRow = document.getElementById('matrixTableHeader');
+      const tbody = document.getElementById('matrixTableBody');
+      if (!theadRow || !tbody) return;
+
+      const colDefs = [
+        { id: 'col_name', label: 'Competitor', defaultWidth: 210, align: 'left', pl: 'pl-5' },
+        { id: 'col_tier', label: 'Tier', defaultWidth: 120, align: 'left' },
+        { id: 'col_price', label: 'Price ($)', defaultWidth: 100, align: 'left' },
+        { id: 'col_score', label: 'Score (0-100)', defaultWidth: 110, align: 'left' },
+        { id: 'col_usability', label: 'Usability', defaultWidth: 100, align: 'left' },
+        { id: 'col_support', label: 'Support', defaultWidth: 100, align: 'left' }
+      ];
+
+      // 1. Build Header
+      let headersHtml = '';
+
+      colDefs.forEach(col => {
+        const w = getColWidth(col.id, col.defaultWidth);
+        const paddingClass = col.pl ? `p-3.5 ${col.pl}` : 'p-3.5';
+        headersHtml += `
+          <th class="${paddingClass} font-semibold resizable-th select-none" style="width: ${w}px; min-width: 60px;" data-col-id="${col.id}">
+            <span class="truncate block" title="${col.label}">${col.label}</span>
+            <div class="col-resizer" data-col-id="${col.id}" title="Drag to resize, double-click to reset"></div>
+          </th>
+        `;
+      });
+
+      matrixData.features.forEach(feat => {
+        const featColId = `feat_${feat.id}`;
+        const w = getColWidth(featColId, 140);
+        headersHtml += `
+          <th class="p-3.5 font-semibold group resizable-th select-none" style="width: ${w}px; min-width: 80px;" data-col-id="${featColId}">
+            <div class="flex items-center justify-between pr-2">
+              <span class="truncate block" title="${feat.name}">${feat.name}</span>
+              <button onclick="removeFeatureColumn('${feat.id}')" title="Delete Column" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 ml-1 transition-opacity cursor-pointer">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+            <div class="col-resizer" data-col-id="${featColId}" title="Drag to resize, double-click to reset"></div>
+          </th>
+        `;
+      });
+
+      const actionW = getColWidth('col_action', 70);
+      headersHtml += `
+        <th class="p-3.5 text-center font-semibold resizable-th select-none" style="width: ${actionW}px; min-width: 50px;" data-col-id="col_action">
+          <span>Action</span>
+          <div class="col-resizer" data-col-id="col_action" title="Drag to resize, double-click to reset"></div>
+        </th>
+      `;
+      theadRow.innerHTML = headersHtml;
+
+      // 2. Build Rows
+      let rowsHtml = '';
+      const q = filterQuery.trim().toLowerCase();
+
+      matrixData.competitors.forEach((comp, compIdx) => {
+        if (q && !comp.name.toLowerCase().includes(q) && !comp.tier.toLowerCase().includes(q)) {
+          return;
+        }
+
+        const isYou = comp.isYou;
+        const rowBg = isYou ? 'bg-indigo-50/50 hover:bg-indigo-50/80 font-medium' : 'hover:bg-slate-50/80';
+
+        rowsHtml += `<tr class="${rowBg} transition-colors group">`;
+
+        // Competitor Name
+        rowsHtml += `
+          <td class="p-3 pl-5 border-t border-slate-200 overflow-hidden">
+            <div class="flex items-center gap-2">
+              ${isYou ? '<span class="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold tracking-wide uppercase shrink-0">YOU</span>' : ''}
+              <input type="text" value="${comp.name}" 
+                     onchange="updateCompetitorField(${compIdx}, 'name', this.value)" 
+                     class="bg-transparent border-0 font-medium text-slate-900 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded px-1.5 py-0.5 w-full truncate">
+            </div>
+          </td>
+        `;
+
+        // Tier
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 overflow-hidden">
+            <select onchange="updateCompetitorField(${compIdx}, 'tier', this.value)" class="bg-transparent border border-slate-200/80 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-indigo-500 w-full truncate cursor-pointer">
+              <option value="Leader" ${comp.tier === 'Leader' ? 'selected' : ''}>Leader</option>
+              <option value="Challenger" ${comp.tier === 'Challenger' ? 'selected' : ''}>Challenger</option>
+              <option value="Niche" ${comp.tier === 'Niche' ? 'selected' : ''}>Niche</option>
+              <option value="Legacy" ${comp.tier === 'Legacy' ? 'selected' : ''}>Legacy</option>
+            </select>
+          </td>
+        `;
+
+        // Price
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 overflow-hidden">
+            <div class="flex items-center">
+              <span class="text-slate-400 mr-1">$</span>
+              <input type="number" min="0" value="${comp.price}" 
+                     onchange="updateCompetitorField(${compIdx}, 'price', Number(this.value))" 
+                     class="w-full bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded px-1 py-0.5">
+            </div>
+          </td>
+        `;
+
+        // Score
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 overflow-hidden">
+            <input type="number" min="0" max="100" value="${comp.score}" 
+                   onchange="updateCompetitorField(${compIdx}, 'score', Number(this.value))" 
+                   class="w-full font-semibold text-slate-800 bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded px-1 py-0.5">
+          </td>
+        `;
+
+        // Usability
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 overflow-hidden">
+            <input type="number" min="0" max="10" step="0.1" value="${comp.usability}" 
+                   onchange="updateCompetitorField(${compIdx}, 'usability', Number(this.value))" 
+                   class="w-full bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded px-1 py-0.5">
+          </td>
+        `;
+
+        // Support
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 overflow-hidden">
+            <input type="number" min="0" max="10" step="0.1" value="${comp.support}" 
+                   onchange="updateCompetitorField(${compIdx}, 'support', Number(this.value))" 
+                   class="w-full bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded px-1 py-0.5">
+          </td>
+        `;
+
+        // Feature Columns
+        matrixData.features.forEach(feat => {
+          const val = (comp.features && comp.features[feat.id]) || 'No';
+          let badgeClass = 'bg-rose-50 text-rose-700 border-rose-200';
+          let icon = 'x';
+          if (val === 'Yes') {
+            badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+            icon = 'check';
+          } else if (val === 'Partial') {
+            badgeClass = 'bg-amber-50 text-amber-700 border-amber-200';
+            icon = 'minus';
+          }
+
+          rowsHtml += `
+            <td class="p-3 border-t border-slate-200 overflow-hidden">
+              <button type="button" onclick="cycleFeatureStatus(${compIdx}, '${feat.id}')" 
+                      title="Click to toggle (Yes -> Partial -> No)"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border ${badgeClass} hover:opacity-80 transition-all cursor-pointer truncate max-w-full">
+                <i data-lucide="${icon}" class="w-3 h-3 shrink-0"></i>
+                <span class="truncate">${val}</span>
+              </button>
+            </td>
+          `;
+        });
+
+        // Actions (Delete)
+        rowsHtml += `
+          <td class="p-3 border-t border-slate-200 text-center overflow-hidden">
+            ${!isYou ? `
+              <button onclick="removeCompetitor(${compIdx})" title="Delete competitor" 
+                      class="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition-colors cursor-pointer">
+                <i data-lucide="trash" class="w-4 h-4"></i>
+              </button>
+            ` : '<span class="text-[10px] text-slate-400">Locked</span>'}
+          </td>
+        `;
+
+        rowsHtml += `</tr>`;
+      });
+
+      tbody.innerHTML = rowsHtml;
+      initColumnResizers();
+      lucide.createIcons();
+    }
+
+    function initColumnResizers() {
+      const resizers = document.querySelectorAll('.col-resizer');
+
+      resizers.forEach(resizer => {
+        const th = resizer.parentElement;
+        const colId = resizer.getAttribute('data-col-id');
+
+        const onStart = (clientX) => {
+          const startX = clientX;
+          const startWidth = th.offsetWidth;
+          resizer.classList.add('resizing');
+          document.body.classList.add('is-resizing-col');
+
+          const onMove = (currentX) => {
+            const delta = currentX - startX;
+            const newWidth = Math.max(55, startWidth + delta);
+            th.style.width = `${newWidth}px`;
+            th.style.minWidth = `${newWidth}px`;
+            if (!matrixData.columnWidths) matrixData.columnWidths = {};
+            matrixData.columnWidths[colId] = newWidth;
+          };
+
+          const onEnd = () => {
+            resizer.classList.remove('resizing');
+            document.body.classList.remove('is-resizing-col');
+            saveData();
+          };
+
+          const mouseMoveHandler = (e) => onMove(e.clientX);
+          const mouseUpHandler = () => {
+            onEnd();
+            document.removeEventListener('mousemove', mouseMoveHandler);
+            document.removeEventListener('mouseup', mouseUpHandler);
+          };
+          document.addEventListener('mousemove', mouseMoveHandler);
+          document.addEventListener('mouseup', mouseUpHandler);
+
+          const touchMoveHandler = (e) => {
+            if (e.touches.length > 0) onMove(e.touches[0].clientX);
+          };
+          const touchEndHandler = () => {
+            onEnd();
+            document.removeEventListener('touchmove', touchMoveHandler);
+            document.removeEventListener('touchend', touchEndHandler);
+          };
+          document.addEventListener('touchmove', touchMoveHandler, { passive: false });
+          document.addEventListener('touchend', touchEndHandler);
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onStart(e.clientX);
+        });
+
+        resizer.addEventListener('touchstart', (e) => {
+          if (e.touches.length > 0) {
+            e.stopPropagation();
+            onStart(e.touches[0].clientX);
+          }
+        }, { passive: false });
+
+        resizer.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          const defaultWidths = {
+            col_name: 210,
+            col_tier: 120,
+            col_price: 100,
+            col_score: 110,
+            col_usability: 100,
+            col_support: 100,
+            col_action: 70
+          };
+          const defaultW = defaultWidths[colId] || 140;
+          if (!matrixData.columnWidths) matrixData.columnWidths = {};
+          matrixData.columnWidths[colId] = defaultW;
+          saveData();
+          renderMatrixTable(document.getElementById('matrixSearchInput').value);
+          showToast(`Reset column width`, 'info');
+        });
+      });
+    }
+
+    function resetColumnWidths() {
+      matrixData.columnWidths = {
+        col_name: 210,
+        col_tier: 120,
+        col_price: 100,
+        col_score: 110,
+        col_usability: 100,
+        col_support: 100,
+        col_action: 70
+      };
+      saveData();
+      renderMatrixTable(document.getElementById('matrixSearchInput').value);
+      showToast('Reset all column widths to default', 'info');
+    }
+
+    function updateCompetitorField(compIndex, field, value) {
+      if (matrixData.competitors[compIndex]) {
+        matrixData.competitors[compIndex][field] = value;
+        saveData();
+        updateKPIs();
+        updateQuadrantChart();
+        renderBattlecards();
+        showToast(`Updated ${matrixData.competitors[compIndex].name}'s ${field}`);
+      }
+    }
+
+    function cycleFeatureStatus(compIndex, featId) {
+      const comp = matrixData.competitors[compIndex];
+      if (!comp) return;
+      if (!comp.features) comp.features = {};
+      
+      const current = comp.features[featId] || 'No';
+      let next = 'Yes';
+      if (current === 'Yes') next = 'Partial';
+      else if (current === 'Partial') next = 'No';
+      else next = 'Yes';
+
+      comp.features[featId] = next;
+      saveData();
+      renderMatrixTable(document.getElementById('matrixSearchInput').value);
+      renderBattlecards();
+      showToast(`${comp.name}: updated to "${next}"`);
+    }
+
+    function filterMatrixTable() {
+      const q = document.getElementById('matrixSearchInput').value;
+      renderMatrixTable(q);
+    }
+
+    function removeCompetitor(index) {
+      const target = matrixData.competitors[index];
+      if (target.isYou) return;
+      
+      matrixData.competitors.splice(index, 1);
+      saveData();
+      renderAll();
+      showToast(`Removed "${target.name}" from matrix`, 'info');
+    }
+
+    function removeFeatureColumn(featId) {
+      const index = matrixData.features.findIndex(f => f.id === featId);
+      if (index !== -1) {
+        const name = matrixData.features[index].name;
+        matrixData.features.splice(index, 1);
+        matrixData.competitors.forEach(c => {
+          if (c.features && c.features[featId]) {
+            delete c.features[featId];
+          }
+        });
+        saveData();
+        renderAll();
+        showToast(`Feature column "${name}" deleted`, 'info');
+      }
+    }
+
+    function initCharts() {
+      const quadCanvas = document.getElementById('quadrantChart');
+      if (!quadCanvas) return;
+      const quadCtx = quadCanvas.getContext('2d');
+      quadrantChartInstance = new Chart(quadCtx, {
+        type: 'bubble',
+        data: { datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  const raw = ctx.raw;
+                  return `${raw.label}: Price $${raw.x}/mo, Feature Score ${raw.y}`;
+                }
+              }
+            },
+            legend: { display: false }
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: 'Pricing ($ / Month)',
+                color: '#64748b',
+                font: { size: 11, weight: '600' }
+              },
+              grid: { color: '#f1f5f9' },
+              suggestedMin: 0
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Value & Capability Score (0 - 100)',
+                color: '#64748b',
+                font: { size: 11, weight: '600' }
+              },
+              grid: { color: '#f1f5f9' },
+              suggestedMin: 40,
+              suggestedMax: 100
+            }
+          }
+        }
+      });
+    }
+
+    function updateQuadrantChart() {
+      if (!quadrantChartInstance) return;
+
+      const datasets = matrixData.competitors.map(comp => {
+        const isYou = comp.isYou;
+        return {
+          label: comp.name,
+          data: [{
+            x: Number(comp.price) || 10,
+            y: Number(comp.score) || 50,
+            r: isYou ? 14 : Math.max(7, Math.min(18, (comp.marketShare || 15) / 2 + 5)),
+            label: comp.name
+          }],
+          backgroundColor: isYou ? 'rgba(79, 70, 229, 0.85)' : 'rgba(148, 163, 184, 0.55)',
+          borderColor: isYou ? '#4338ca' : '#64748b',
+          borderWidth: isYou ? 2.5 : 1.5,
+          hoverBackgroundColor: isYou ? '#4338ca' : '#475569'
+        };
+      });
+
+      quadrantChartInstance.data.datasets = datasets;
+      quadrantChartInstance.update();
+    }
+
+    function exportToExcel() {
+      try {
+        const rows = [];
+        const header = ['Competitor Name', 'Market Tier', 'Price ($/mo)', 'Capability Score (0-100)', 'Usability (0-10)', 'Support (0-10)', 'Is Your Company'];
+        matrixData.features.forEach(f => header.push(f.name));
+        rows.push(header);
+
+        matrixData.competitors.forEach(comp => {
+          const row = [
+            comp.name,
+            comp.tier,
+            Number(comp.price) || 0,
+            Number(comp.score) || 0,
+            Number(comp.usability) || 0,
+            Number(comp.support) || 0,
+            comp.isYou ? 'YES' : 'NO'
+          ];
+
+          matrixData.features.forEach(f => {
+            row.push((comp.features && comp.features[f.id]) || 'No');
+          });
+
+          rows.push(row);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const colWidths = [
+          { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 16 }
+        ];
+        matrixData.features.forEach(() => colWidths.push({ wch: 22 }));
+        ws['!cols'] = colWidths;
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Competitor Matrix');
+
+        const filename = `competitor_matrix_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        showToast(`Exported "${filename}" successfully! You can now edit it in Excel.`);
+      } catch (err) {
+        console.error('Export error:', err);
+        showToast('Error exporting to Excel: ' + err.message, 'error');
+      }
+    }
+
+    function downloadExcelTemplate() {
+      try {
+        const rows = [
+          ['Competitor Name', 'Market Tier', 'Price ($/mo)', 'Capability Score (0-100)', 'Usability (0-10)', 'Support (0-10)', 'Is Your Company', 'REST & Webhook API', 'SSO / SAML 2.0', 'Custom BI Reports', 'AI Smart Assistant'],
+          ['Our Product (You)', 'Leader', 49, 88, 9.2, 9.0, 'YES', 'Yes', 'Yes', 'Yes', 'Yes'],
+          ['Acme Pro Corp', 'Leader', 99, 91, 8.0, 8.5, 'NO', 'Yes', 'Yes', 'Yes', 'Partial'],
+          ['BoltFlow Inc', 'Challenger', 59, 82, 8.7, 7.8, 'NO', 'Yes', 'Partial', 'Partial', 'Yes']
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Template');
+        XLSX.writeFile(wb, 'competitor_matrix_template.xlsx');
+        showToast('Starter Excel template downloaded!');
+      } catch (e) {
+        showToast('Failed to download template', 'error');
+      }
+    }
+
+    function handleExcelUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+          if (!jsonData || jsonData.length < 2) {
+            showToast('The uploaded sheet is empty or missing data rows.', 'error');
+            return;
+          }
+
+          const headerRow = jsonData[0].map(h => (h || '').toString().trim());
+          const newCompetitors = [];
+          const newFeatures = [];
+
+          const fixedFieldNames = [
+            'competitor name', 'company', 'name',
+            'market tier', 'tier',
+            'price', 'price ($/mo)', 'starting price',
+            'capability score (0-100)', 'score', 'overall score',
+            'usability (0-10)', 'usability',
+            'support (0-10)', 'support',
+            'is your company', 'is you', 'you'
+          ];
+
+          const featureColIndices = [];
+          headerRow.forEach((colName, colIdx) => {
+            const cleanName = colName.toLowerCase();
+            if (!fixedFieldNames.includes(cleanName) && cleanName !== '') {
+              const featId = cleanName.replace(/[^a-z0-9]/g, '_');
+              featureColIndices.push({ index: colIdx, id: featId, name: colName });
+              newFeatures.push({ id: featId, name: colName });
+            }
+          });
+
+          function findColIndex(possibleNames) {
+            return headerRow.findIndex(h => possibleNames.includes(h.toLowerCase()));
+          }
+
+          const nameIdx = findColIndex(['competitor name', 'company', 'name']);
+          const tierIdx = findColIndex(['market tier', 'tier']);
+          const priceIdx = findColIndex(['price ($/mo)', 'price', 'starting price']);
+          const scoreIdx = findColIndex(['capability score (0-100)', 'score', 'overall score']);
+          const usabIdx = findColIndex(['usability (0-10)', 'usability']);
+          const suppIdx = findColIndex(['support (0-10)', 'support']);
+          const youIdx = findColIndex(['is your company', 'is you', 'you']);
+
+          for (let r = 1; r < jsonData.length; r++) {
+            const row = jsonData[r];
+            if (!row || row.length === 0 || !row[nameIdx >= 0 ? nameIdx : 0]) continue;
+
+            const name = String(row[nameIdx >= 0 ? nameIdx : 0]).trim();
+            const tier = (tierIdx >= 0 && row[tierIdx]) ? String(row[tierIdx]).trim() : 'Challenger';
+            const price = (priceIdx >= 0 && !isNaN(row[priceIdx])) ? Number(row[priceIdx]) : 49;
+            const score = (scoreIdx >= 0 && !isNaN(row[scoreIdx])) ? Number(row[scoreIdx]) : 75;
+            const usability = (usabIdx >= 0 && !isNaN(row[usabIdx])) ? Number(row[usabIdx]) : 8.0;
+            const support = (suppIdx >= 0 && !isNaN(row[suppIdx])) ? Number(row[suppIdx]) : 8.0;
+            
+            let isYou = false;
+            if (youIdx >= 0 && row[youIdx]) {
+              const val = String(row[youIdx]).toLowerCase();
+              isYou = val === 'yes' || val === 'true' || val === '1';
+            } else if (name.toLowerCase().includes('you') || name.toLowerCase().includes('our product')) {
+              isYou = true;
+            }
+
+            const compFeatures = {};
+            featureColIndices.forEach(feat => {
+              let fVal = row[feat.index];
+              if (fVal === undefined || fVal === null || fVal === '') {
+                compFeatures[feat.id] = 'No';
+              } else {
+                const s = String(fVal).trim().toLowerCase();
+                if (s === 'yes' || s === '1' || s === 'true' || s === 'y') {
+                  compFeatures[feat.id] = 'Yes';
+                } else if (s === 'partial' || s === 'p' || s === 'addon' || s === 'add-on') {
+                  compFeatures[feat.id] = 'Partial';
+                } else {
+                  compFeatures[feat.id] = 'No';
+                }
+              }
+            });
+
+            // Find matching default battlecard if available
+            const defaultMatch = DEFAULT_DATA.competitors.find(d => d.name.toLowerCase() === name.toLowerCase());
+
+            newCompetitors.push({
+              id: 'comp_' + Math.random().toString(36).substr(2, 9),
+              isYou: isYou,
+              name: name,
+              tier: tier,
+              price: price,
+              score: score,
+              usability: usability,
+              support: support,
+              battlecard: defaultMatch ? JSON.parse(JSON.stringify(defaultMatch.battlecard)) : null,
+              features: compFeatures
+            });
+          }
+
+          if (newCompetitors.length === 0) {
+            showToast('No valid competitor rows could be found in this spreadsheet.', 'error');
+            return;
+          }
+
+          if (!newCompetitors.some(c => c.isYou)) {
+            newCompetitors[0].isYou = true;
+          }
+
+          if (newFeatures.length > 0) {
+            matrixData.features = newFeatures;
+          }
+
+          matrixData.competitors = newCompetitors;
+          saveData();
+          renderAll();
+
+          showToast(`Successfully imported ${newCompetitors.length} competitors from Excel!`, 'success');
+        } catch (error) {
+          console.error('Import parse error:', error);
+          showToast('Failed to parse Excel file: ' + error.message, 'error');
+        } finally {
+          event.target.value = '';
+        }
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    function openAddModal() {
+      document.getElementById('addModal').classList.remove('hidden');
+    }
+    function closeAddModal() {
+      document.getElementById('addModal').classList.add('hidden');
+    }
+
+    function handleCompetitorSubmit(e) {
+      e.preventDefault();
+      const name = document.getElementById('newCompName').value.trim();
+      const tier = document.getElementById('newCompTier').value;
+      const price = Number(document.getElementById('newCompPrice').value) || 0;
+      const score = Number(document.getElementById('newCompScore').value) || 0;
+      const usability = Number(document.getElementById('newCompUsability').value) || 0;
+      const support = Number(document.getElementById('newCompSupport').value) || 0;
+
+      if (!name) return;
+
+      const newFeatures = {};
+      matrixData.features.forEach(f => {
+        newFeatures[f.id] = 'No';
+      });
+
+      const newComp = {
+        id: 'comp_' + Date.now(),
+        isYou: false,
+        name,
+        tier,
+        price,
+        score,
+        usability,
+        support,
+        marketShare: 10,
+        battlecard: {
+          pitch: `Position against ${name} by emphasizing our faster time-to-value, lower total ownership costs, and responsive modern architecture.`,
+          strengths: [`Established footprint in the ${tier} segment`, `Recognized customer presence`],
+          weaknesses: [`Legacy fee structures and slower onboarding`, `Rigid configuration workflows`],
+          landmines: [`Ask: How long before your non-technical team is fully onboarded and seeing ROI?`],
+          silverBullet: `Highlight our transparent flat pricing, rapid 2-day sandbox trial, and high frontline user adoption.`
+        },
+        features: newFeatures
+      };
+
+      matrixData.competitors.push(newComp);
+      saveData();
+      renderAll();
+      closeAddModal();
+      document.getElementById('addCompetitorForm').reset();
+      showToast(`Added "${name}" to competitor matrix & battlecards`);
+    }
+
+    function openAddFeatureModal() {
+      document.getElementById('addFeatureModal').classList.remove('hidden');
+    }
+    function closeAddFeatureModal() {
+      document.getElementById('addFeatureModal').classList.add('hidden');
+    }
+
+    function handleFeatureSubmit(e) {
+      e.preventDefault();
+      const featName = document.getElementById('newFeatureName').value.trim();
+      const defaultState = document.getElementById('newFeatureDefault').value;
+
+      if (!featName) return;
+
+      const featId = 'feat_' + Date.now();
+      matrixData.features.push({ id: featId, name: featName });
+
+      matrixData.competitors.forEach(comp => {
+        if (!comp.features) comp.features = {};
+        comp.features[featId] = defaultState;
+      });
+
+      saveData();
+      renderAll();
+      closeAddFeatureModal();
+      document.getElementById('addFeatureForm').reset();
+      showToast(`Added feature column "${featName}"`);
+    }
+
+    function setBattlecardViewMode(mode) {
+      battlecardViewMode = mode;
+      const btnSingle = document.getElementById('battlecardTabSingle');
+      const btnGrid = document.getElementById('battlecardTabGrid');
+      const selectContainer = document.getElementById('battlecardSelectContainer');
+
+      if (mode === 'focused') {
+        if (btnSingle) btnSingle.className = 'px-3 py-1.5 rounded-md font-medium text-white bg-indigo-600 shadow-xs transition-all cursor-pointer';
+        if (btnGrid) btnGrid.className = 'px-3 py-1.5 rounded-md font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer';
+        if (selectContainer) selectContainer.classList.remove('hidden');
+      } else {
+        if (btnGrid) btnGrid.className = 'px-3 py-1.5 rounded-md font-medium text-white bg-indigo-600 shadow-xs transition-all cursor-pointer';
+        if (btnSingle) btnSingle.className = 'px-3 py-1.5 rounded-md font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer';
+        if (selectContainer) selectContainer.classList.add('hidden');
+      }
+      renderBattlecards();
+    }
+
+    function onBattlecardCompetitorChange() {
+      const select = document.getElementById('battlecardCompetitorSelect');
+      if (select) {
+        selectedBattlecardCompId = select.value;
+        renderBattlecards();
+      }
+    }
+
+    function ensureBattlecardData(comp) {
+      // First check if matching default exists
+      const match = DEFAULT_DATA.competitors.find(d => d.id === comp.id || d.name.toLowerCase() === comp.name.toLowerCase());
+      if (match && match.battlecard && (!comp.battlecard || !comp.battlecard.pitch)) {
+        comp.battlecard = JSON.parse(JSON.stringify(match.battlecard));
+      }
+
+      if (!comp.battlecard) {
+        comp.battlecard = {
+          pitch: `Position against ${comp.name} by highlighting our faster time to value, superior user experience, and cost advantage.`,
+          strengths: [`Established presence in the ${comp.tier} category`, `Existing customer footprint and brand recall`],
+          weaknesses: [`Legacy pricing or packaging restrictions`, `Lower adaptability to modern collaborative workflows`],
+          landmines: [`Ask: How long does typical end-user training and system onboarding take?`],
+          silverBullet: `Focus on our modern architecture, superior usability rating, and transparent pricing.`
+        };
+      }
+      if (!Array.isArray(comp.battlecard.strengths)) comp.battlecard.strengths = [];
+      if (!Array.isArray(comp.battlecard.weaknesses)) comp.battlecard.weaknesses = [];
+      if (!Array.isArray(comp.battlecard.landmines)) comp.battlecard.landmines = [];
+      if (!comp.battlecard.pitch) comp.battlecard.pitch = '';
+      if (!comp.battlecard.silverBullet) comp.battlecard.silverBullet = '';
+      return comp.battlecard;
+    }
+
+    function computeFeatureGaps(comp, youComp) {
+      const advantages = []; // We have Yes/Partial, they have No
+      const vulnerabilities = []; // They have Yes, we have No/Partial
+
+      matrixData.features.forEach(feat => {
+        const youVal = (youComp.features && youComp.features[feat.id]) || 'No';
+        const compVal = (comp.features && comp.features[feat.id]) || 'No';
+
+        if (youVal === 'Yes' && compVal !== 'Yes') {
+          advantages.push({ name: feat.name, youVal, compVal });
+        } else if (compVal === 'Yes' && youVal !== 'Yes') {
+          vulnerabilities.push({ name: feat.name, youVal, compVal });
+        }
+      });
+
+      return { advantages, vulnerabilities };
+    }
+
+    function renderBattlecards() {
+      const container = document.getElementById('battlecardsContainer');
+      const select = document.getElementById('battlecardCompetitorSelect');
+      if (!container) return;
+
+      const youComp = matrixData.competitors.find(c => c.isYou) || matrixData.competitors[0];
+      const competitors = matrixData.competitors.filter(c => !c.isYou);
+
+      if (competitors.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
+            <i data-lucide="shield-alert" class="w-10 h-10 text-slate-400 mx-auto mb-2"></i>
+            <h4 class="font-bold text-slate-800 text-sm">No Competitors to Compare</h4>
+            <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Click "Add Competitor" or upload an Excel sheet to start seeing cheat sheets.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+      // Populate competitor dropdown options
+      if (select) {
+        const prevVal = selectedBattlecardCompId || select.value;
+        select.innerHTML = '';
+        competitors.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = `${c.name} (${c.tier})`;
+          select.appendChild(opt);
+        });
+
+        if (prevVal && competitors.some(c => c.id === prevVal)) {
+          select.value = prevVal;
+          selectedBattlecardCompId = prevVal;
+        } else {
+          selectedBattlecardCompId = competitors[0].id;
+          select.value = selectedBattlecardCompId;
+        }
+      }
+
+      const activeComps = battlecardViewMode === 'grid' 
+        ? competitors 
+        : [competitors.find(c => c.id === selectedBattlecardCompId) || competitors[0]];
+
+      let html = `<div class="${battlecardViewMode === 'grid' ? 'grid grid-cols-1 xl:grid-cols-2 gap-6' : 'space-y-6'}">`;
+
+      activeComps.forEach(comp => {
+        const card = ensureBattlecardData(comp);
+        const gaps = computeFeatureGaps(comp, youComp);
+
+        const priceDiff = (comp.price || 0) - (youComp.price || 0);
+        let priceDiffText = '';
+        if (priceDiff > 0) {
+          priceDiffText = `<span class="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] font-semibold">We are $${priceDiff}/mo cheaper</span>`;
+        } else if (priceDiff < 0) {
+          priceDiffText = `<span class="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px] font-semibold">They are $${Math.abs(priceDiff)}/mo cheaper</span>`;
+        } else {
+          priceDiffText = `<span class="text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px] font-semibold">Same Price ($${comp.price}/mo)</span>`;
+        }
+
+        const scoreDiff = (youComp.score || 0) - (comp.score || 0);
+        let scoreBadge = '';
+        if (scoreDiff > 0) {
+          scoreBadge = `<span class="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] font-semibold">+${scoreDiff} pts Better Quality</span>`;
+        } else if (scoreDiff < 0) {
+          scoreBadge = `<span class="text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded text-[11px] font-semibold">${scoreDiff} pts Lower Quality</span>`;
+        } else {
+          scoreBadge = `<span class="text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px] font-semibold">Same Score (${comp.score}/100)</span>`;
+        }
+
+        html += `
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden">
+            <!-- Card Head -->
+            <div class="p-5 border-b border-slate-200/80 bg-gradient-to-r from-slate-50 via-white to-indigo-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2.5">
+                  <h3 class="text-lg font-bold text-slate-900 tracking-tight">${comp.name}</h3>
+                  <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                    ${comp.tier} Tier
+                  </span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 pt-0.5">
+                  ${priceDiffText}
+                  ${scoreBadge}
+                  <span class="text-[11px] text-slate-500">Ease of Use: <strong class="text-slate-700">${comp.usability || 'N/A'}/10</strong> (Us: ${youComp.usability || 'N/A'})</span>
+                </div>
+              </div>
+
+              <!-- Card Action Buttons -->
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button onclick="copyBattlecardText('${comp.id}')" 
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        title="Copy cheat sheet to clipboard">
+                  <i data-lucide="copy" class="w-3.5 h-3.5 text-slate-500"></i>
+                  <span>Copy</span>
+                </button>
+                <button onclick="openEditBattlecardModal('${comp.id}')" 
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        title="Edit what to say about this competitor">
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5 text-indigo-600"></i>
+                  <span>Edit</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Card Body Content -->
+            <div class="p-5 space-y-5 text-xs">
+              
+              <!-- Quick Pitch / How We Win -->
+              <div class="p-4 rounded-xl bg-gradient-to-r from-indigo-50/70 via-indigo-50/40 to-slate-50 border border-indigo-100 space-y-1.5">
+                <div class="flex items-center gap-2 font-bold text-indigo-950 text-xs uppercase tracking-wider">
+                  <i data-lucide="zap" class="w-3.5 h-3.5 text-indigo-600"></i>
+                  <span>Quick Pitch: Why We Win</span>
+                </div>
+                <p class="text-slate-700 leading-relaxed font-normal">
+                  ${card.pitch || 'We are easier to use, faster to set up, and cost less than ' + comp.name + '.'}
+                </p>
+              </div>
+
+              <!-- Two Column Grid: Strengths vs Weaknesses -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                <!-- Competitor Strengths (What they pitch) -->
+                <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200 space-y-2.5">
+                  <div class="flex items-center justify-between pb-1 border-b border-slate-200">
+                    <span class="font-bold text-slate-900 flex items-center gap-1.5">
+                      <i data-lucide="shield" class="w-3.5 h-3.5 text-slate-500"></i>
+                      <span>What They're Good At</span>
+                    </span>
+                    <span class="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-medium">${card.strengths.length}</span>
+                  </div>
+                  <ul class="space-y-1.5 text-slate-600">
+                    ${card.strengths.length > 0 ? card.strengths.map(s => `
+                      <li class="flex items-start gap-1.5">
+                        <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0"></i>
+                        <span>${s}</span>
+                      </li>
+                    `).join('') : '<li class="text-slate-400 italic">No notes added yet.</li>'}
+                  </ul>
+                </div>
+
+                <!-- Competitor Vulnerabilities (Where they struggle) -->
+                <div class="p-4 rounded-xl bg-rose-50/40 border border-rose-200/80 space-y-2.5">
+                  <div class="flex items-center justify-between pb-1 border-b border-rose-200/60">
+                    <span class="font-bold text-rose-950 flex items-center gap-1.5">
+                      <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-rose-600"></i>
+                      <span>Where They Fall Short</span>
+                    </span>
+                    <span class="text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-medium">${card.weaknesses.length}</span>
+                  </div>
+                  <ul class="space-y-1.5 text-slate-700">
+                    ${card.weaknesses.length > 0 ? card.weaknesses.map(w => `
+                      <li class="flex items-start gap-1.5">
+                        <i data-lucide="x" class="w-3.5 h-3.5 text-rose-600 mt-0.5 shrink-0"></i>
+                        <span>${w}</span>
+                      </li>
+                    `).join('') : '<li class="text-slate-400 italic">No weaknesses added yet.</li>'}
+                  </ul>
+                </div>
+
+              </div>
+
+              <!-- Live Feature Gap Synthesis (Calculated in real-time from matrix data) -->
+              <div class="p-4 rounded-xl bg-white border border-slate-200 space-y-2.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-600"></i>
+                    <span>Feature Differences (From the Table)</span>
+                  </span>
+                  <span class="text-[10px] text-slate-400">Updates live when you edit the table</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <!-- We have, they don't -->
+                  <div class="space-y-1.5">
+                    <p class="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                      <i data-lucide="plus-circle" class="w-3 h-3"></i> What we have that they don't:
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">
+                      ${gaps.advantages.length > 0 ? gaps.advantages.map(a => `
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          <i data-lucide="check" class="w-2.5 h-2.5"></i> ${a.name}
+                        </span>
+                      `).join('') : '<span class="text-[11px] text-slate-400 italic">No feature differences</span>'}
+                    </div>
+                  </div>
+
+                  <!-- They have, we don't -->
+                  <div class="space-y-1.5">
+                    <p class="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
+                      <i data-lucide="shield-alert" class="w-3 h-3"></i> What they have that we don't:
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">
+                      ${gaps.vulnerabilities.length > 0 ? gaps.vulnerabilities.map(v => `
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                          <i data-lucide="alert-circle" class="w-2.5 h-2.5"></i> ${v.name}
+                        </span>
+                      `).join('') : '<span class="text-[11px] text-slate-400 italic">None (we have everything they do)</span>'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Discovery Landmines & Silver Bullet -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                <!-- Discovery Landmines -->
+                <div class="p-4 rounded-xl bg-amber-50/40 border border-amber-200/80 space-y-2">
+                  <span class="font-bold text-amber-950 flex items-center gap-1.5">
+                    <i data-lucide="target" class="w-3.5 h-3.5 text-amber-600"></i>
+                    <span>Smart Questions to Ask the Buyer</span>
+                  </span>
+                  <ul class="space-y-1.5 text-slate-700">
+                    ${card.landmines.length > 0 ? card.landmines.map(l => `
+                      <li class="flex items-start gap-1.5">
+                        <i data-lucide="help-circle" class="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0"></i>
+                        <span>${l}</span>
+                      </li>
+                    `).join('') : '<li class="text-slate-400 italic">No questions added yet.</li>'}
+                  </ul>
+                </div>
+
+                <!-- Silver Bullet -->
+                <div class="p-4 rounded-xl bg-indigo-50/30 border border-indigo-200/70 space-y-2">
+                  <span class="font-bold text-indigo-950 flex items-center gap-1.5">
+                    <i data-lucide="message-square" class="w-3.5 h-3.5 text-indigo-600"></i>
+                    <span>Best Comeback Line</span>
+                  </span>
+                  <p class="text-slate-700 leading-relaxed italic bg-white/80 p-2.5 rounded-lg border border-indigo-100">
+                    "${card.silverBullet || 'Focus on how fast we get them up and running without unexpected extra fees.'}"
+                  </p>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+      container.innerHTML = html;
+      lucide.createIcons();
+    }
+
+    function openEditBattlecardModal(compId) {
+      const comp = matrixData.competitors.find(c => c.id === compId);
+      if (!comp) return;
+
+      const card = ensureBattlecardData(comp);
+
+      document.getElementById('editBattlecardCompId').value = comp.id;
+      document.getElementById('editBattlecardCompName').textContent = comp.name;
+      document.getElementById('editBattlecardPitch').value = card.pitch || '';
+      document.getElementById('editBattlecardStrengths').value = (card.strengths || []).join('\n');
+      document.getElementById('editBattlecardWeaknesses').value = (card.weaknesses || []).join('\n');
+      document.getElementById('editBattlecardLandmines').value = (card.landmines || []).join('\n');
+      document.getElementById('editBattlecardSilverBullet').value = card.silverBullet || '';
+
+      document.getElementById('editBattlecardModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeEditBattlecardModal() {
+      document.getElementById('editBattlecardModal').classList.add('hidden');
+    }
+
+    function handleBattlecardSubmit(e) {
+      e.preventDefault();
+      const compId = document.getElementById('editBattlecardCompId').value;
+      const comp = matrixData.competitors.find(c => c.id === compId);
+      if (!comp) return;
+
+      const card = ensureBattlecardData(comp);
+      card.pitch = document.getElementById('editBattlecardPitch').value.trim();
+      card.silverBullet = document.getElementById('editBattlecardSilverBullet').value.trim();
+
+      const parseLines = (text) => text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      card.strengths = parseLines(document.getElementById('editBattlecardStrengths').value);
+      card.weaknesses = parseLines(document.getElementById('editBattlecardWeaknesses').value);
+      card.landmines = parseLines(document.getElementById('editBattlecardLandmines').value);
+
+      saveData();
+      renderBattlecards();
+      closeEditBattlecardModal();
+      showToast(`Updated battlecard for ${comp.name}!`, 'success');
+    }
+
+    function copyBattlecardText(compId) {
+      const comp = matrixData.competitors.find(c => c.id === compId);
+      const youComp = matrixData.competitors.find(c => c.isYou) || matrixData.competitors[0];
+      if (!comp) return;
+
+      const card = ensureBattlecardData(comp);
+      const gaps = computeFeatureGaps(comp, youComp);
+
+      const text = `
+=== COMPETITIVE BATTLECARD: ${comp.name.toUpperCase()} (${comp.tier} Tier) ===
+Price: $${comp.price}/mo (Vs Our Price: $${youComp.price}/mo)
+Overall Score: ${comp.score}/100 | Usability: ${comp.usability}/10
+
+[HOW WE WIN ELEVATOR PITCH]
+${card.pitch}
+
+[THEIR STRENGTHS - WHAT THEY PITCH]
+${card.strengths.map(s => '• ' + s).join('\n')}
+
+[THEIR VULNERABILITIES - WHERE THEY STRUGGLE]
+${card.weaknesses.map(w => '• ' + w).join('\n')}
+
+[LIVE MATRIX ADVANTAGES]
+Our Feature Edge: ${gaps.advantages.map(a => a.name).join(', ') || 'None'}
+Their Coverage: ${gaps.vulnerabilities.map(v => v.name).join(', ') || 'None'}
+
+[DISCOVERY CALL LANDMINES]
+${card.landmines.map(l => '? ' + l).join('\n')}
+
+[OBJECTION HANDLING SILVER BULLET]
+"${card.silverBullet}"
+      `.trim();
+
+      const dummy = document.createElement('textarea');
+      dummy.value = text;
+      dummy.style.position = 'fixed';
+      dummy.style.opacity = '0';
+      document.body.appendChild(dummy);
+      dummy.select();
+      try {
+        document.execCommand('copy');
+        showToast(`Copied ${comp.name} battlecard to clipboard!`);
+      } catch (err) {
+        showToast('Unable to copy battlecard', 'error');
+      }
+      document.body.removeChild(dummy);
+    }
+
+    function renderAll() {
+      updateKPIs();
+      renderMatrixTable(document.getElementById('matrixSearchInput') ? document.getElementById('matrixSearchInput').value : '');
+      updateQuadrantChart();
+      renderBattlecards();
+      lucide.createIcons();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      renderAll();
+      switchView('battlecards');
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>
